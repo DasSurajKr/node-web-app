@@ -1,31 +1,11 @@
 const express = require("express");
-const mysql = require("mysql2");
-const UserDAO = require("./userDAO");
+const axios = require("axios");
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-
-// ===== RDS CONNECTION =====
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: 3306
-});
-
-db.connect((err) => {
-  if (err) {
-    console.error("❌ DB connection failed:", err.message);
-  } else {
-    console.log("✅ Connected to RDS");
-  }
-});
-
-// ===== DAO INITIALIZATION =====
-const userDAO = new UserDAO(db);
+const DAO_SERVICE_URL = process.env.DAO_SERVICE_URL || "http://localhost:3001";
 
 
 // =====================
@@ -35,7 +15,8 @@ const userDAO = new UserDAO(db);
 // ALB health check
 app.get("/health", (req, res) => {
   res.status(200).json({
-    status: "UP",
+    status: "200",
+    app: "UP",
     service: "node-aws-api"
   });
 });
@@ -46,7 +27,7 @@ app.get("/health", (req, res) => {
 // =====================
 
 app.get("/", (req, res) => {
-  res.json({
+  res.status(200).json({
     message: "Node.js AWS API is running 🚀",
     version: "1.0.0"
   });
@@ -61,54 +42,46 @@ app.get("/ping", (req, res) => {
 // 🗄️ DATABASE ROUTES
 // =====================
 
-// Test DB connection
-app.get("/db-test", (req, res) => {
-  userDAO.testConnection((err, time) => {
-    if (err) {
-      return res.status(500).json({
-        error: "DB error",
-        details: err.message
-      });
-    }
-
-    res.json({
-      message: "DB connection successful",
-      server_time: time
+// Test DB connection via DAO service
+app.get("/db-test", async (req, res) => {
+  try {
+    const response = await axios.get(`${DAO_SERVICE_URL}/db-status`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({
+      error: "DAO service error",
+      details: error.message
     });
-  });
+  }
 });
 
 
-// Fetch sample data
-app.get("/users", (req, res) => {
-  userDAO.getAllUsers((err, users) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    res.json({
-      users: users
+// Fetch sample data from DAO service
+app.get("/users", async (req, res) => {
+  try {
+    const response = await axios.get(`${DAO_SERVICE_URL}/users`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to fetch users",
+      details: error.message
     });
-  });
+  }
 });
 
 
-// Insert test record
-app.post("/users", (req, res) => {
+// Insert test record via DAO service
+app.post("/users", async (req, res) => {
   const { name } = req.body;
 
-  userDAO.createUser(name, (err, user) => {
-    if (err) {
-      return res.status(err.message === "Name is required" ? 400 : 500).json({
-        error: err.message
-      });
-    }
-
-    res.json({
-      message: "User created",
-      id: user.id
+  try {
+    const response = await axios.post(`${DAO_SERVICE_URL}/users`, { name });
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message
     });
-  });
+  }
 });
 
 

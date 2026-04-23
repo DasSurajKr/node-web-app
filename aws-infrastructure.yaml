@@ -1,0 +1,405 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Architecture: ALB -> NodeApp -> DAO Service -> RDS'
+
+Parameters:
+  VpcCIDR:
+    Default: '10.0.0.0/16'
+    Type: String
+  PublicSubnetCIDR:
+    Default: '10.0.1.0/24'
+    Type: String
+  PrivateSubnetCIDR:
+    Default: '10.0.2.0/24'
+    Type: String
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: RDS Master Password
+  EC2KeyPair:
+    Type: String
+    Description: EC2 Key Pair for SSH access
+  DBName:
+    Default: 'mydb'
+    Type: String
+
+Resources:
+  # ==================== NETWORKING ====================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: node-app-vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetCIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetCIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: private-subnet
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: node-app-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # ==================== SECURITY GROUPS ====================
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB Security Group (Public)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: alb-sg
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: NodeApp Security Group (Private)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref PrivateSubnetCIDR
+      Tags:
+        - Key: Name
+          Value: app-sg
+
+  DAOSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: DAO Service Security Group (Private)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3001
+          ToPort: 3001
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 3001
+          ToPort: 3001
+          CidrIp: !Ref PrivateSubnetCIDR
+      Tags:
+        - Key: Name
+          Value: dao-sg
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS Security Group (Private)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref DAOSecurityGroup
+      Tags:
+        - Key: Name
+          Value: rds-sg
+
+  # ==================== LOAD BALANCER ====================
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: node-app-alb
+      Subnets:
+        - !Ref PublicSubnet
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: node-app-alb
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: node-app-tg
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: node-app-tg
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ==================== IAM ROLES ====================
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: ec2-instance-role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # ==================== LAUNCH TEMPLATES ====================
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: node-app-template
+      LaunchTemplateData:
+        ImageId: ami-0c55b159cbfafe1f0  # Amazon Linux 2
+        InstanceType: t3.micro
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref AppSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            echo "Starting NodeApp deployment..."
+            
+            # Update system
+            yum update -y
+            yum install -y nodejs git
+            
+            # Create app directory
+            mkdir -p /opt/nodeapp
+            cd /opt/nodeapp
+            
+            # Clone repo (replace with your repo URL)
+            git clone https://github.com/DasSurajKr/node-web-app.git .
+            
+            # Install dependencies
+            npm install
+            
+            # Create .env file
+            cat > /opt/nodeapp/.env << EOF
+            PORT=3000
+            DAO_SERVICE_URL=http://dao-service:3001
+            DB_HOST=${DBEndpoint}
+            DB_USER=admin
+            DB_PASSWORD=${DBPassword}
+            DB_NAME=${DBName}
+            EOF
+            
+            # Install PM2
+            npm install -g pm2
+            
+            # Start app with PM2
+            pm2 start app.js --name node-app
+            pm2 save
+            pm2 startup
+            
+            echo "NodeApp deployment completed"
+      TagSpecifications:
+        - ResourceType: instance
+          Tags:
+            - Key: Name
+              Value: node-app-instance
+
+  DAOLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: dao-service-template
+      LaunchTemplateData:
+        ImageId: ami-0c55b159cbfafe1f0  # Amazon Linux 2
+        InstanceType: t3.micro
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref DAOSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            echo "Starting DAO Service deployment..."
+            
+            # Update system
+            yum update -y
+            yum install -y nodejs git
+            
+            # Create dao directory
+            mkdir -p /opt/daoservice
+            cd /opt/daoservice
+            
+            # Clone repo (replace with your repo URL)
+            git clone https://github.com/DasSurajKr/node-web-app.git .
+            
+            # Install dependencies
+            npm install
+            
+            # Create .env file
+            cat > /opt/daoservice/.env << EOF
+            DAO_PORT=3001
+            DB_HOST=${DBEndpoint}
+            DB_USER=admin
+            DB_PASSWORD=${DBPassword}
+            DB_NAME=${DBName}
+            EOF
+            
+            # Install PM2
+            npm install -g pm2
+            
+            # Start DAO service with PM2
+            pm2 start daoService.js --name dao-service
+            pm2 save
+            pm2 startup
+            
+            echo "DAO Service deployment completed"
+      TagSpecifications:
+        - ResourceType: instance
+          Tags:
+            - Key: Name
+              Value: dao-service-instance
+
+  # ==================== RDS DATABASE ====================
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet
+        - !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: db-subnet-group
+
+  RDSDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: node-app-db
+      Engine: mysql
+      EngineVersion: '8.0'
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp2
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'mon:04:00-mon:05:00'
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: node-app-db
+
+Outputs:
+  LoadBalancerDNS:
+    Description: ALB DNS Name
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: NodeAppALB
+
+  AppLaunchTemplateId:
+    Description: NodeApp Launch Template ID
+    Value: !Ref AppLaunchTemplate
+    Export:
+      Name: NodeAppLaunchTemplate
+
+  DAOLaunchTemplateId:
+    Description: DAO Service Launch Template ID
+    Value: !Ref DAOLaunchTemplate
+    Export:
+      Name: DAOLaunchTemplate
+
+  RDSEndpoint:
+    Description: RDS Database Endpoint
+    Value: !GetAtt RDSDatabase.Endpoint.Address
+    Export:
+      Name: RDSEndpoint
+
+  VPCID:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: NodeAppVPC
