@@ -1,5 +1,6 @@
 const express = require("express");
 const mysql = require("mysql2");
+const UserDAO = require("./userDAO");
 
 const app = express();
 app.use(express.json());
@@ -22,6 +23,9 @@ db.connect((err) => {
     console.log("✅ Connected to RDS");
   }
 });
+
+// ===== DAO INITIALIZATION =====
+const userDAO = new UserDAO(db);
 
 
 // =====================
@@ -59,7 +63,7 @@ app.get("/ping", (req, res) => {
 
 // Test DB connection
 app.get("/db-test", (req, res) => {
-  db.query("SELECT NOW() AS time", (err, results) => {
+  userDAO.testConnection((err, time) => {
     if (err) {
       return res.status(500).json({
         error: "DB error",
@@ -69,7 +73,7 @@ app.get("/db-test", (req, res) => {
 
     res.json({
       message: "DB connection successful",
-      server_time: results[0].time
+      server_time: time
     });
   });
 });
@@ -77,13 +81,13 @@ app.get("/db-test", (req, res) => {
 
 // Fetch sample data
 app.get("/users", (req, res) => {
-  db.query("SELECT 1 AS id, 'AWS User' AS name", (err, results) => {
+  userDAO.getAllUsers((err, users) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
 
     res.json({
-      users: results
+      users: users
     });
   });
 });
@@ -93,28 +97,18 @@ app.get("/users", (req, res) => {
 app.post("/users", (req, res) => {
   const { name } = req.body;
 
-  if (!name) {
-    return res.status(400).json({
-      error: "Name is required"
-    });
-  }
-
-  db.query(
-    "INSERT INTO users (name) VALUES (?)",
-    [name],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json({
-          error: err.message
-        });
-      }
-
-      res.json({
-        message: "User created",
-        id: result.insertId
+  userDAO.createUser(name, (err, user) => {
+    if (err) {
+      return res.status(err.message === "Name is required" ? 400 : 500).json({
+        error: err.message
       });
     }
-  );
+
+    res.json({
+      message: "User created",
+      id: user.id
+    });
+  });
 });
 
 
