@@ -21,6 +21,17 @@ Parameters:
   DBName:
     Default: 'mydb'
     Type: String
+  InstanceOS:
+    Default: 'ubuntu'
+    Type: String
+    AllowedValues:
+      - amazon
+      - ubuntu
+    Description: Operating System for EC2 instances (amazon or ubuntu)
+
+Conditions:
+  IsUbuntu: !Equals [!Ref InstanceOS, ubuntu]
+  IsAmazonLinux: !Equals [!Ref InstanceOS, amazon]
 
 Resources:
   # ==================== NETWORKING ====================
@@ -231,51 +242,97 @@ Resources:
     Properties:
       LaunchTemplateName: node-app-template
       LaunchTemplateData:
-        ImageId: ami-0c55b159cbfafe1f0  # Amazon Linux 2
+        ImageId: !If
+          - IsUbuntu
+          - ami-0b4fc6352021c6e4c  # Ubuntu 22.04 LTS (us-east-1)
+          - ami-0c55b159cbfafe1f0  # Amazon Linux 2
         InstanceType: t3.micro
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
           - !Ref AppSecurityGroup
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -e
-            echo "Starting NodeApp deployment..."
-            
-            # Update system
-            yum update -y
-            yum install -y nodejs git
-            
-            # Create app directory
-            mkdir -p /opt/nodeapp
-            cd /opt/nodeapp
-            
-            # Clone repo (replace with your repo URL)
-            git clone https://github.com/DasSurajKr/node-web-app.git .
-            
-            # Install dependencies
-            npm install
-            
-            # Create .env file
-            cat > /opt/nodeapp/.env << EOF
-            PORT=3000
-            DAO_SERVICE_URL=http://dao-service:3001
-            DB_HOST=${DBEndpoint}
-            DB_USER=admin
-            DB_PASSWORD=${DBPassword}
-            DB_NAME=${DBName}
-            EOF
-            
-            # Install PM2
-            npm install -g pm2
-            
-            # Start app with PM2
-            pm2 start app.js --name node-app
-            pm2 save
-            pm2 startup
-            
-            echo "NodeApp deployment completed"
+          Fn::Base64: !If
+            - IsUbuntu
+            - !Sub |
+                #!/bin/bash
+                set -e
+                echo "Starting NodeApp deployment (Ubuntu)..."
+                
+                # Update system (Ubuntu uses apt)
+                apt-get update -y
+                apt-get install -y curl git build-essential
+                
+                # Install Node.js 18.x
+                curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+                apt-get install -y nodejs
+                
+                # Create app directory
+                mkdir -p /opt/nodeapp
+                cd /opt/nodeapp
+                
+                # Clone repo
+                git clone https://github.com/DasSurajKr/node-web-app.git .
+                
+                # Install dependencies
+                npm install
+                
+                # Create .env file
+                cat > /opt/nodeapp/.env << EOF
+                PORT=3000
+                DAO_SERVICE_URL=http://dao-service:3001
+                DB_HOST=${DBEndpoint}
+                DB_USER=admin
+                DB_PASSWORD=${DBPassword}
+                DB_NAME=${DBName}
+                EOF
+                
+                # Install PM2
+                npm install -g pm2
+                
+                # Start app with PM2
+                pm2 start app.js --name node-app
+                pm2 save
+                
+                echo "NodeApp deployment completed"
+            - !Sub |
+                #!/bin/bash
+                set -e
+                echo "Starting NodeApp deployment (Amazon Linux)..."
+                
+                # Update system
+                yum update -y
+                yum install -y nodejs git
+                
+                # Create app directory
+                mkdir -p /opt/nodeapp
+                cd /opt/nodeapp
+                
+                # Clone repo
+                git clone https://github.com/DasSurajKr/node-web-app.git .
+                
+                # Install dependencies
+                npm install
+                
+                # Create .env file
+                cat > /opt/nodeapp/.env << EOF
+                PORT=3000
+                DAO_SERVICE_URL=http://dao-service:3001
+                DB_HOST=${DBEndpoint}
+                DB_USER=admin
+                DB_PASSWORD=${DBPassword}
+                DB_NAME=${DBName}
+                EOF
+                
+                # Install PM2
+                npm install -g pm2
+                
+                # Start app with PM2
+                pm2 start app.js --name node-app
+                pm2 save
+                pm2 startup
+                
+                echo "NodeApp deployment completed"
       TagSpecifications:
         - ResourceType: instance
           Tags:
@@ -287,50 +344,95 @@ Resources:
     Properties:
       LaunchTemplateName: dao-service-template
       LaunchTemplateData:
-        ImageId: ami-0c55b159cbfafe1f0  # Amazon Linux 2
+        ImageId: !If
+          - IsUbuntu
+          - ami-0b4fc6352021c6e4c  # Ubuntu 22.04 LTS (us-east-1)
+          - ami-0c55b159cbfafe1f0  # Amazon Linux 2
         InstanceType: t3.micro
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
           - !Ref DAOSecurityGroup
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -e
-            echo "Starting DAO Service deployment..."
-            
-            # Update system
-            yum update -y
-            yum install -y nodejs git
-            
-            # Create dao directory
-            mkdir -p /opt/daoservice
-            cd /opt/daoservice
-            
-            # Clone repo (replace with your repo URL)
-            git clone https://github.com/DasSurajKr/node-web-app.git .
-            
-            # Install dependencies
-            npm install
-            
-            # Create .env file
-            cat > /opt/daoservice/.env << EOF
-            DAO_PORT=3001
-            DB_HOST=${DBEndpoint}
-            DB_USER=admin
-            DB_PASSWORD=${DBPassword}
-            DB_NAME=${DBName}
-            EOF
-            
-            # Install PM2
-            npm install -g pm2
-            
-            # Start DAO service with PM2
-            pm2 start daoService.js --name dao-service
-            pm2 save
-            pm2 startup
-            
-            echo "DAO Service deployment completed"
+          Fn::Base64: !If
+            - IsUbuntu
+            - !Sub |
+                #!/bin/bash
+                set -e
+                echo "Starting DAO Service deployment (Ubuntu)..."
+                
+                # Update system (Ubuntu uses apt)
+                apt-get update -y
+                apt-get install -y curl git build-essential
+                
+                # Install Node.js 18.x
+                curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+                apt-get install -y nodejs
+                
+                # Create dao directory
+                mkdir -p /opt/daoservice
+                cd /opt/daoservice
+                
+                # Clone repo
+                git clone https://github.com/DasSurajKr/node-web-app.git .
+                
+                # Install dependencies
+                npm install
+                
+                # Create .env file
+                cat > /opt/daoservice/.env << EOF
+                DAO_PORT=3001
+                DB_HOST=${DBEndpoint}
+                DB_USER=admin
+                DB_PASSWORD=${DBPassword}
+                DB_NAME=${DBName}
+                EOF
+                
+                # Install PM2
+                npm install -g pm2
+                
+                # Start DAO service with PM2
+                pm2 start daoService.js --name dao-service
+                pm2 save
+                
+                echo "DAO Service deployment completed"
+            - !Sub |
+                #!/bin/bash
+                set -e
+                echo "Starting DAO Service deployment (Amazon Linux)..."
+                
+                # Update system
+                yum update -y
+                yum install -y nodejs git
+                
+                # Create dao directory
+                mkdir -p /opt/daoservice
+                cd /opt/daoservice
+                
+                # Clone repo
+                git clone https://github.com/DasSurajKr/node-web-app.git .
+                
+                # Install dependencies
+                npm install
+                
+                # Create .env file
+                cat > /opt/daoservice/.env << EOF
+                DAO_PORT=3001
+                DB_HOST=${DBEndpoint}
+                DB_USER=admin
+                DB_PASSWORD=${DBPassword}
+                DB_NAME=${DBName}
+                EOF
+                
+                # Install PM2
+                npm install -g pm2
+                
+                # Start DAO service with PM2
+                pm2 start daoService.js --name dao-service
+                pm2 save
+                pm2 startup
+                
+                echo "DAO Service deployment completed"
       TagSpecifications:
         - ResourceType: instance
           Tags:

@@ -1,18 +1,25 @@
 #!/bin/bash
 
-# EC2 instance setup script for DAO Service
+# EC2 instance setup script for DAO Service (Ubuntu)
 # This script is used in the Launch Template UserData
 
 set -e
 
 echo "=== DAO Service Deployment Started ==="
 
-# Update system packages
-yum update -y
+# Update system packages (Ubuntu uses apt)
+apt-get update -y
 
-# Install Node.js (from NodeSource repository)
-curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-yum install -y nodejs git
+# Install required packages
+apt-get install -y curl git build-essential
+
+# Install Node.js 18.x (Ubuntu)
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt-get install -y nodejs
+
+# Verify Node.js installation
+node --version
+npm --version
 
 # Create application directory
 mkdir -p /opt/daoservice
@@ -40,13 +47,17 @@ npm install -g pm2
 # Start DAO service with PM2
 pm2 start daoService.js --name dao-service
 pm2 save
-pm2 startup
 
-# Set up CloudWatch logs (optional)
-yum install -y awslogs
+# Setup PM2 startup script for Ubuntu
+PM2_HOME=/home/ubuntu/.pm2 pm2 startup || true
 
 # Configure service to start on reboot
-echo "@reboot pm2 start /opt/daoservice/daoService.js --name dao-service" | crontab -
+chmod +x /etc/init.d/pm2
+ln -s /root/.pm2 /etc/pm2
+
+# Log completion
+echo "=== DAO Service Deployment Completed ===" > /var/log/dao-deployment.log
+date >> /var/log/dao-deployment.log
 
 # Log completion
 echo "=== DAO Service Deployment Completed ===" > /var/log/dao-deployment.log

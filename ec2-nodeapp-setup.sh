@@ -1,18 +1,25 @@
 #!/bin/bash
 
-# EC2 instance setup script for NodeApp
+# EC2 instance setup script for NodeApp (Ubuntu)
 # This script is used in the Launch Template UserData
 
 set -e
 
 echo "=== NodeApp Deployment Started ==="
 
-# Update system packages
-yum update -y
+# Update system packages (Ubuntu uses apt)
+apt-get update -y
 
-# Install Node.js (from NodeSource repository)
-curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-yum install -y nodejs git
+# Install required packages
+apt-get install -y curl git build-essential
+
+# Install Node.js 18.x (Ubuntu)
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt-get install -y nodejs
+
+# Verify Node.js installation
+node --version
+npm --version
 
 # Create application directory
 mkdir -p /opt/nodeapp
@@ -41,13 +48,17 @@ npm install -g pm2
 # Start application with PM2
 pm2 start app.js --name node-app
 pm2 save
-pm2 startup
 
-# Set up CloudWatch logs (optional)
-yum install -y awslogs
+# Setup PM2 startup script for Ubuntu
+PM2_HOME=/home/ubuntu/.pm2 pm2 startup || true
 
 # Configure application to start on reboot
-echo "@reboot pm2 start /opt/nodeapp/app.js --name node-app" | crontab -
+chmod +x /etc/init.d/pm2
+ln -s /root/.pm2 /etc/pm2
+
+# Log completion
+echo "=== NodeApp Deployment Completed ===" > /var/log/nodeapp-deployment.log
+date >> /var/log/nodeapp-deployment.log
 
 # Log completion
 echo "=== NodeApp Deployment Completed ===" > /var/log/nodeapp-deployment.log

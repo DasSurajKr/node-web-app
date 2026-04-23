@@ -65,6 +65,7 @@
 
 ### 2. Deploy CloudFormation Stack
 
+**For Ubuntu (Recommended):**
 ```bash
 aws cloudformation create-stack \
   --stack-name node-app-stack \
@@ -72,6 +73,19 @@ aws cloudformation create-stack \
   --parameters \
     ParameterKey=EC2KeyPair,ParameterValue=your-keypair-name \
     ParameterKey=DBPassword,ParameterValue=YourSecurePassword123! \
+    ParameterKey=InstanceOS,ParameterValue=ubuntu \
+  --region us-east-1
+```
+
+**For Amazon Linux:**
+```bash
+aws cloudformation create-stack \
+  --stack-name node-app-stack \
+  --template-body file://aws-infrastructure.yaml \
+  --parameters \
+    ParameterKey=EC2KeyPair,ParameterValue=your-keypair-name \
+    ParameterKey=DBPassword,ParameterValue=YourSecurePassword123! \
+    ParameterKey=InstanceOS,ParameterValue=amazon \
   --region us-east-1
 ```
 
